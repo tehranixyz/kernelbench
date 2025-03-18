@@ -3,7 +3,6 @@ import multiprocessing as mp
 import os
 import shutil
 import time
-import traceback
 from dataclasses import dataclass
 
 import pydra
@@ -349,7 +348,6 @@ def batch_eval(
                         print(
                             f"[ERROR] Evaluation FAILED for Problem ID: {problem_id}, Sample ID: {sample_id}: {str(e)}"
                         )
-                        traceback.print_exc()
                         results.append((problem_id, sample_id, None))
                         remove_cache_dir(
                             config.kernel_eval_build_dir,
