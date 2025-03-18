@@ -82,14 +82,14 @@ class EvalConfig(Config):
         # To speedup evaluation, you can start building the kernel on CPU on disk as cache
         self.build_cache = False
         self.num_cpu_workers = (
-            96  # number of parallel process to to parallelize the build on CPUs
+            20  # number of parallel process to to parallelize the build on CPUs
         )
 
         # Directory to build kernels for evaluation
         self.kernel_eval_build_dir = os.path.join(REPO_TOP_DIR, "cache")
 
         # number of GPUs to do batch evaluation
-        self.num_gpu_devices = 8
+        self.num_gpu_devices = 1
 
         # Backend to use for kernel implementation (cuda or triton)
         self.backend = "cuda"
