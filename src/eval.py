@@ -29,6 +29,11 @@ REPO_TOP_PATH = os.path.abspath(
 KERNEL_BENCH_PATH = os.path.join(REPO_TOP_PATH, "KernelBench")
 
 
+def get_error_name(e: Exception) -> str:
+
+    return f"{e.__class__.__module__}.{e.__class__.__name__}"
+
+
 def fetch_kernel_from_database(
     run_name: str, problem_id: int, sample_id: int, server_url: str
 ):
@@ -118,7 +123,7 @@ def load_original_model_and_inputs(
 
 
 def load_custom_model_with_tempfile(
-    code_string, build_directory=None, entry_point="ModelNew"
+    model_custom_src, build_directory=None, entry_point="ModelNew"
 ):
     """
     Writes the provided Python code string to a temporary .py file,
@@ -139,7 +144,7 @@ def load_custom_model_with_tempfile(
     # Create a temporary named file with a .py extension
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tmp_file:
         # Write the code string into the file
-        tmp_file.write(code_string)
+        tmp_file.write(model_custom_src)
         # Capture the path to the file
         tempfile_path = tmp_file.name
         temp_file = tmp_file
@@ -377,6 +382,10 @@ def eval_kernel_against_ref(
     # set CUDA device
     torch.cuda.set_device(device)
     is_triton = backend == "triton"
+    metadata = {}  # for storing result metadata
+    metadata["hardware"] = torch.cuda.get_device_name(device=device)
+    metadata["device"] = str(device)  # for debugging
+
     if is_triton:
         # need to set env var for triton code to guarentee no wrong device shennanignas
         if isinstance(device, int):
@@ -415,10 +424,6 @@ def eval_kernel_against_ref(
     if verbose:
         print("[Eval] Loading and Compiling New Model with Custom CUDA Kernel")
 
-    metadata = {}  # for storing result metadata
-    metadata["hardware"] = torch.cuda.get_device_name(device=device)
-    metadata["device"] = str(device)  # for debugging
-
     # this is where compilation happens
     try:
         os.environ["TORCH_USE_CUDA_DSA"] = "1"  # compile with device side assertion
@@ -446,6 +451,7 @@ def eval_kernel_against_ref(
             graceful_eval_cleanup(context, device, tempfile)
             return None
         else:
+            metadata["compilation_error_name"] = get_error_name(e)
             metadata["compilation_error"] = e
             graceful_eval_cleanup(context, device, tempfile)
             return KernelExecResult(
@@ -468,6 +474,7 @@ def eval_kernel_against_ref(
         # TODO: add metadata for runtime error e.g. error in launching kernel, illegal memory access, ...
         graceful_eval_cleanup(context, device, tempfile)
         metadata["runtime_error"] = e
+        metadata["runtime_error_name"] = get_error_name(e)
         return KernelExecResult(
             compiled=True, correctness=False, metadata=metadata
         )  # skip further steps
@@ -487,11 +494,11 @@ def eval_kernel_against_ref(
             verbose=verbose,
             seed=seed_num,
             device=device,
-            truncate_errors=not is_triton,
         )
     except Exception as e:
         # TODO: add metadata for runtime error e.g. error in launching kernel, illegal memory access, ...
         metadata["runtime_error"] = e
+        metadata["runtime_error_name"] = get_error_name(e)
         kernel_exec_result = KernelExecResult(
             compiled=True, correctness=False, metadata=metadata
         )
@@ -627,7 +634,6 @@ def run_and_check_correctness(
     verbose=False,
     seed=42,
     device=None,
-    truncate_errors: bool = True,
 ) -> KernelExecResult:
     """
     run the model and check correctness,
@@ -678,6 +684,7 @@ def run_and_check_correctness(
                         f"Output shape mismatch: Expected {output.shape}, got {output_new.shape}",
                         metadata,
                     )
+                    metadata["correctness_issue_name"] = "correctness_issue"
                     if verbose:
                         print(
                             f"[FAIL] trial {trial}: Output shape mismatch: Expected {output.shape}, got {output_new.shape}"
@@ -707,8 +714,9 @@ def run_and_check_correctness(
                 print(f"Error in launching kernel for ModelNew: {e}")
 
                 metadata = register_and_format_exception(
-                    "runtime_error", e, metadata, truncate=truncate_errors
+                    "runtime_error", e, metadata, truncate=True
                 )
+                metadata["runtime_error_name"] = get_error_name(e)
                 return KernelExecResult(
                     compiled=True, correctness=False, metadata=metadata
                 )
