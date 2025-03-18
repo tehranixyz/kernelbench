@@ -2,17 +2,21 @@
 Helpers for Evaluations
 """
 
+import importlib
+import json
+import os, subprocess
+import random
+import sys
+import tempfile
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
+from typing import Union
+
+import numpy as np
 import requests
 import torch
 import torch.nn as nn
-import os, subprocess
 from pydantic import BaseModel
-import numpy as np
-import random
-import json
-from contextlib import redirect_stdout, redirect_stderr
-from io import StringIO
-import sys
 
 from . import utils
 
@@ -112,7 +116,10 @@ def load_original_model_and_inputs(
     Model = context.get("Model")
     return (Model, get_init_inputs_fn, get_inputs_fn)
 
-def load_custom_model_with_tempfile(code_string, build_directory= None ,entry_point="ModelNew"):
+
+def load_custom_model_with_tempfile(
+    code_string, build_directory=None, entry_point="ModelNew"
+):
     """
     Writes the provided Python code string to a temporary .py file,
     dynamically imports the module so we can access the modified model class.
@@ -148,6 +155,7 @@ def load_custom_model_with_tempfile(code_string, build_directory= None ,entry_po
 
     # Return the object (class, function, etc.) that was defined in the code
     return ModelNew, temp_file
+
 
 def load_custom_model(
     model_custom_src: str, context: dict, build_directory: str = None
@@ -187,7 +195,11 @@ def _cleanup_cuda_extensions():
         shutil.rmtree(torch_extensions_path)
 
 
-def graceful_eval_cleanup(curr_context: dict, device: torch.device, tempfile: tempfile.NamedTemporaryFile = None):
+def graceful_eval_cleanup(
+    curr_context: dict,
+    device: torch.device,
+    tempfile: tempfile.NamedTemporaryFile = None,
+):
     """
     Clean up env, gpu cache, and compiled CUDA extensions after evaluation
     """  # delete ran-specific function definitions before next eval run
@@ -207,6 +219,7 @@ def graceful_eval_cleanup(curr_context: dict, device: torch.device, tempfile: te
         os.remove(tempfile.name)
 
     # _cleanup_cuda_extensions() # SIMON NOTE: is this necessary?
+
 
 def build_compile_cache_legacy(
     custom_model_src: str,
@@ -241,11 +254,12 @@ def build_compile_cache_legacy(
         if verbose:
             print(f"[Compilation] Compilation Successful, saved cache at: {build_dir}")
     except Exception as e:
-        print(f"[Compilation] Failed to compile custom CUDA kernel. Unable to cache, \nError: {e}")
+        print(
+            f"[Compilation] Failed to compile custom CUDA kernel. Unable to cache, \nError: {e}"
+        )
         return False, stdout_buffer.getvalue(), str(e)
-    
-    return True, stdout_buffer.getvalue(), None
 
+    return True, stdout_buffer.getvalue(), None
 
 
 def build_compile_cache(
@@ -281,16 +295,16 @@ def build_compile_cache(
         if verbose:
             print(f"[Compilation] Compilation Successful, saved cache at: {build_dir}")
     except Exception as e:
-        print(f"[Compilation] Failed to compile custom CUDA kernel. Unable to cache, \nError: {e}")
+        print(
+            f"[Compilation] Failed to compile custom CUDA kernel. Unable to cache, \nError: {e}"
+        )
         return False, stdout_buffer.getvalue(), str(e)
 
     return True, stdout_buffer.getvalue(), None
 
 
 def build_compile_cache_with_capturing(
-    custom_model_src: str,
-    verbose: bool = False,
-    build_dir: os.PathLike = None
+    custom_model_src: str, verbose: bool = False, build_dir: os.PathLike = None
 ) -> tuple[int, str, str]:
     """
     Write a temporary python file to compile the custom model on CPU
@@ -312,22 +326,21 @@ def build_compile_cache_with_capturing(
         f.write(custom_model_src)
 
     # Execute the temporary Python file and capture output
-    process = subprocess.Popen(['python', tmp], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    process = subprocess.Popen(
+        ["python", tmp], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
     stdout, stderr = process.communicate()
     returncode = process.returncode
 
     # Clean up temporary file
     os.remove(tmp)
 
-
     if verbose:
         print("[CPU Precompile] return code: ", returncode)
-        print("[CPU Precompile] stdout: \n", stdout.decode('utf-8'))
-        print("[CPU Precompile] stderr: \n", stderr.decode('utf-8')) 
+        print("[CPU Precompile] stdout: \n", stdout.decode("utf-8"))
+        print("[CPU Precompile] stderr: \n", stderr.decode("utf-8"))
 
-    return returncode, stdout.decode('utf-8'), stderr.decode('utf-8')
-
-
+    return returncode, stdout.decode("utf-8"), stderr.decode("utf-8")
 
 
 def eval_kernel_against_ref(
@@ -339,8 +352,10 @@ def eval_kernel_against_ref(
     verbose: bool = False,
     measure_performance: bool = False,
     build_dir: os.PathLike = None,
-    device: torch.device = torch.cuda.current_device() if torch.cuda.is_available() else None, # have to run on GPU
-    backend: str = "cuda", # can be 'cuda' or 'triton'
+    device: Union[torch.device, int] = (
+        torch.cuda.current_device() if torch.cuda.is_available() else None
+    ),  # have to run on GPU
+    backend: str = "cuda",  # can be 'cuda' or 'triton'
 ) -> KernelExecResult:
     """
     Evaluate the custom kernel against the original model
@@ -363,9 +378,19 @@ def eval_kernel_against_ref(
     torch.cuda.set_device(device)
     is_triton = backend == "triton"
     if is_triton:
-        # need to set env var for triton code to guarentee no wrong device shennanignas 
-        assert device.type == "cuda", "CUDA is not availible on device, cannot run Eval"
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(device.index)
+        # need to set env var for triton code to guarentee no wrong device shennanignas
+        if isinstance(device, int):
+            device_num = device
+        elif isinstance(device, torch.device):
+            assert (
+                device.type == "cuda"
+            ), "CUDA is not availible on device, cannot run Eval"
+            device_num = device.index
+        else:
+            raise ValueError(
+                f"device must be an int or torch.device, got {type(device)}"
+            )
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(device_num)
     context = {}
 
     if verbose:
@@ -400,7 +425,9 @@ def eval_kernel_against_ref(
         tempfile = None
         # add hash for later to distinguish between multi-turn kernels
         if is_triton:
-            ModelNew, tempfile = load_custom_model_with_tempfile(custom_model_src, build_dir)
+            ModelNew, tempfile = load_custom_model_with_tempfile(
+                custom_model_src, build_dir
+            )
         else:
             ModelNew = load_custom_model(custom_model_src, context, build_dir)
         torch.cuda.synchronize(device=device)  # not sure if this is too much
@@ -600,8 +627,7 @@ def run_and_check_correctness(
     verbose=False,
     seed=42,
     device=None,
-    truncate_errors: bool =True,
-
+    truncate_errors: bool = True,
 ) -> KernelExecResult:
     """
     run the model and check correctness,
@@ -730,11 +756,13 @@ def check_metadata_serializable(metadata: dict):
 
     return metadata
 
+
 def check_metadata_serializable_all_types(metadata: dict):
     """
     Ensure metadata is JSON serializable,
     if not, convert non-serializable values to strings recursively
     """
+
     def convert_to_serializable(obj):
         if isinstance(obj, dict):
             return {k: convert_to_serializable(v) for k, v in obj.items()}
