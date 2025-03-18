@@ -6,7 +6,8 @@ from pydra import REQUIRED, Config
 
 import json
 from tqdm import tqdm
-from src import eval, utils, compile
+# Import only what we need
+from src import compile
 import torch
 import os
 import multiprocessing as mp
@@ -15,7 +16,7 @@ import multiprocessing as mp
 from datasets import load_dataset
 
 from src.dataset import construct_kernelbench_dataset
-from src.eval import build_compile_cache, eval_kernel_against_ref, KernelExecResult, check_metadata_serializable_all_types
+from src.eval import eval_kernel_against_ref, KernelExecResult, check_metadata_serializable_all_types
 from src.utils import set_gpu_arch, read_file
 
 """
@@ -81,6 +82,9 @@ class EvalConfig(Config):
 
         # number of GPUs to do batch evaluation
         self.num_gpu_devices = 1
+        
+        # Backend to use for kernel implementation (cuda or triton)
+        self.backend = "cuda"
         
 
     def __repr__(self):
@@ -160,6 +164,7 @@ def evaluate_single_sample(work_args: WorkArgs, configs: EvalConfig, dataset, ru
             num_perf_trials=configs.num_perf_trials,
             build_dir=build_dir,
             device=device,
+            backend=configs.backend,
         )
         return eval_result
     except Exception as e:
@@ -205,7 +210,7 @@ def cuda_single_eval_wrapper(curr_work: WorkArgs, configs: dict, dataset, run_di
             pool.join()
             raise
         except mp.TimeoutError as e:
-            print(f"[WARNING] Evaluation TIMED OUT for Problem ID: {curr_work.problem_id}, Sample ID: {curr_work.sample_id}")
+            print(f"[WARNING] Evaluation TIMED OUT for Problem ID: {curr_work.problem_id}, Sample ID: {curr_work.sample_id}\nException: {e}")
 
         print(f"[Eval Result] Problem ID: {curr_work.problem_id}, Sample ID: {curr_work.sample_id}: {result}")
         return result
@@ -406,7 +411,7 @@ def main(config: EvalConfig):
     print(f"Evaluating 1 sample each for level {config.level} problems: {problem_id_range}")
 
     run_dir = os.path.join(config.runs_dir, config.run_name)
-    eval_file_path = os.path.join(run_dir, f"eval_results.json")
+    eval_file_path = os.path.join(run_dir, "eval_results.json")
 
 
     # set GPU arch to configure what target to build for

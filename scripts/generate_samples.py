@@ -62,6 +62,8 @@ class GenerationConfig(Config):
 
         self.log_prompt = False
 
+        self.backend = "cuda"
+
     def greedy(self):
         # For greedy decoding, epsecially baseline eval
         self.greedy_sample = True
