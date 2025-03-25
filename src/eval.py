@@ -122,9 +122,7 @@ def load_original_model_and_inputs(
     return (Model, get_init_inputs_fn, get_inputs_fn)
 
 
-def load_custom_model_with_tempfile(
-    model_custom_src, build_directory=None, entry_point="ModelNew"
-):
+def load_custom_model_with_tempfile(model_custom_src, entry_point="ModelNew"):
     """
     Writes the provided Python code string to a temporary .py file,
     dynamically imports the module so we can access the modified model class.
@@ -135,11 +133,6 @@ def load_custom_model_with_tempfile(
     This is a hack that is needed for triton code as compile / exec do not play well
     with the @triton.jit decorator.
     """
-
-    if build_directory:
-        model_custom_src = (
-            "import os\n" f"os.environ['TORCH_EXTENSIONS_DIR'] = '{build_directory}'\n"
-        ) + model_custom_src
 
     # Create a temporary named file with a .py extension
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tmp_file:
@@ -431,7 +424,7 @@ def eval_kernel_against_ref(
         # add hash for later to distinguish between multi-turn kernels
         if is_triton:
             ModelNew, tempfile = load_custom_model_with_tempfile(
-                custom_model_src, build_dir
+                custom_model_src, entry_point="ModelNew"
             )
         else:
             ModelNew = load_custom_model(custom_model_src, context, build_dir)
