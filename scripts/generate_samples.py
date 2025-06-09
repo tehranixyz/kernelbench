@@ -62,6 +62,9 @@ class GenerationConfig(Config):
         self.max_tokens = 4096
         self.temperature = 0.0
 
+        # vLLM specific config
+        self.tensor_parallel_size = 1  # number of GPUs to use for tensor parallelism
+
         # Logging
         # Top Directory to Store Runs
         self.runs_dir = os.path.join(REPO_TOP_DIR, "runs")
@@ -243,6 +246,7 @@ def main(config: GenerationConfig):
         temperature=config.temperature,
         max_tokens=config.max_tokens,
         verbose=config.verbose,
+        tensor_parallel_size=config.tensor_parallel_size if config.server_type == "vllm" else None
     )
 
     # Launch workers

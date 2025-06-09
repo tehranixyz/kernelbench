@@ -19,6 +19,7 @@ from together import Together
 from openai import OpenAI
 import google.generativeai as genai
 import anthropic
+from vllm import LLM, SamplingParams
 
 # from datasets import load_dataset
 import numpy as np
@@ -43,6 +44,20 @@ ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY")
 SAMBANOVA_API_KEY = os.environ.get("SAMBANOVA_API_KEY")
 FIREWORKS_API_KEY = os.environ.get("FIREWORKS_API_KEY")
 
+# Global vLLM model instance
+_vllm_model = None
+
+def get_vllm_model(model_name: str, tensor_parallel_size: int = 1):
+    """Get or create a vLLM model instance"""
+    global _vllm_model
+    if _vllm_model is None:
+        _vllm_model = LLM(
+            model=model_name,
+            tensor_parallel_size=tensor_parallel_size,
+            trust_remote_code=True,
+            gpu_memory_utilization=0.9,
+        )
+    return _vllm_model
 
 ########################################################
 # Inference Helpers
@@ -93,6 +108,7 @@ def query_server(
     server_address: str = "localhost",
     server_type: str = "sglang",
     model_name: str = "default",  # specify model type
+    tensor_parallel_size: int = 1,  # for vLLM local model
 
     # for reasoning models
     is_reasoning_model: bool = False, # indiactor of using reasoning models
@@ -110,9 +126,37 @@ def query_server(
     - Gemini / Google AI Studio
     - Fireworks (OpenAI compatbility)
     - SGLang (Local Server)
+    - vLLM (Local Model)
     """
     # Select model and client based on arguments
     match server_type:
+        case "vllm":
+            # Handle local vLLM model
+            tokenizer = AutoTokenizer.from_pretrained(model_name)
+            model = get_vllm_model(model_name, tensor_parallel_size)
+            sampling_params = SamplingParams(
+                temperature=temperature,
+                top_p=0.95,
+                top_k=20,
+                max_tokens=32768,
+                n=num_completions,
+                presence_penalty=1.5
+            )
+
+            formatted_prompt = tokenizer.apply_chat_template(
+                [{"role": "user", "content": prompt}],
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=True
+            )
+
+            outputs = model.generate(formatted_prompt, sampling_params)
+            # Extract text from vLLM output format
+            if len(outputs) == 1:
+                return outputs[0].outputs[0].text
+            else:
+                return [output.outputs[0].text for output in outputs]
+
         case "sglang":
             url = f"http://{server_address}:{server_port}"
             client = OpenAI(
@@ -355,6 +399,12 @@ def query_server(
 
 # a list of presets for API server configs
 SERVER_PRESETS = {
+    "vllm": {
+        "model_name": "meta-llama/Llama-2-7b-chat-hf",  # default model
+        "temperature": 0.7,
+        "max_tokens": 4096,
+        "tensor_parallel_size": 1,  # adjust based on available GPUs
+    },
     "deepseek": {
         "temperature": 1.6, 
         "model_name": "deepseek",
@@ -477,23 +527,21 @@ def remove_code_block_header(code, code_language_type):
 
 def extract_first_code(output_string: str, code_language_types: list[str]) -> str:
     """
-    Extract first code block from model output, specified by code_language_type
+    Extract last code block from model output, specified by code_language_type
     """
     trimmed = output_string.strip()
 
-    # Extracting the first occurrence of content between backticks
-    code_match = re.search(r"```(.*?)```", trimmed, re.DOTALL)
+    # Extracting all occurrences of content between backticks
+    code_matches = re.findall(r"```(.*?)```", trimmed, re.DOTALL)
 
-    if code_match:
-        # Strip leading and trailing whitespace from the extracted code
-        code = code_match.group(1).strip()
+    if code_matches:
+        # Take the last match
+        code = code_matches[-1].strip()
 
-        # depends on code_language_type: cpp, python, etc.
-        # sometimes the block of code is ```cpp ... ``` instead of ``` ... ```
-        # in this case strip the cpp out
+        # Handle code language prefix
         for code_type in code_language_types:
             if code.startswith(code_type):
-                code = code[len(code_type) :].strip()
+                code = code[len(code_type):].strip()
 
         return code
 
