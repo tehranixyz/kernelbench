@@ -51,10 +51,6 @@ def prompt_generate_custom_triton(
 ) -> str:
     prompt = PROBLEM_STATEMENT
 
-    assert (
-        "@triton.jit" in example_new_arch_src
-    ), "Example new arch must contain Triton kernel"
-
     if example_arch_src != "" and example_new_arch_src != "":
         prompt += f"""
         Here's an example to show you the syntax of inline embedding custom Triton kernels in torch: The example given architecture is: \n
